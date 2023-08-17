@@ -1,0 +1,19 @@
+{
+    "train_corpus_dir": "../../data/trainingdata_v3/train",
+    "dev_corpus_dir": "../../data/trainingdata_v3/dev",
+    "output_entity_label": "Medication",
+
+    "bert_name": "../../data/transformers/RoBERTa-large-PM-M3-Voc-NewLines",
+    "max_length": 512,
+    "stride": 128,
+    "boundary_exclusion_size": 32,
+    "do_rstrip_text": true,
+    "learning_rate": 2e-5,
+    "weight_decay": 1e-5,
+    "dropout_output": 0.2,
+    "clip_grad": true,
+    "clipping_grad_value": 1.0,
+    "use_average": true,
+    "batch_size": 8,
+    "max_epoch": 50
+}
