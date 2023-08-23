@@ -6,7 +6,7 @@
     "bert_name": "../../data/transformers/RoBERTa-large-PM-M3-Voc-NewLines",
     "max_length": 512,
     "stride": 128,
-    "boundary_exclusion_size": 32,
+    "boundary_exclusion_size": 31,
     "do_rstrip_text": true,
     "learning_rate": 2e-5,
     "weight_decay": 1e-5,
