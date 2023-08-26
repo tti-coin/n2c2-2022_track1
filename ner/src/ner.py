@@ -1,36 +1,18 @@
 # %%
-import logging as _logging
-_logger = _logging.getLogger(__name__)
-_logger.setLevel(_logging.WARNING)
-_ch = _logging.StreamHandler()
-_ch.setLevel(_logging.WARNING)
-_formatter = _logging.Formatter('%(name)s - %(levelname)s:%(message)s')
-_ch.setFormatter(_formatter)
-_logger.addHandler(_ch)
-
-class _WarnOnce:
-    keys = set()
-    __init__ = None
-    @classmethod
-    def once(cls, key, message):
-        if key not in cls.keys:
-            cls.keys.add(key)
-            _logger.warning(message)
-
-
 _TWO_BECAUSE_OF_SPECIAL_TOKEN = 2
-
 
 import re as _re
 import math as _math
 import collections as _collections
-import dataclasses as _D
 import enum as _enum
-from typing import List as _List, Optional as _Optional, Tuple as _Tuple, Union as _Union, Any as _Any, Annotated as _Annotated, Generic as _Generic, TypeVar as _TypeVar
+from typing import Optional as _Optional, Union as _Union, Any as _Any, Annotated as _Annotated, Generic as _Generic, TypeVar as _TypeVar
 
-import pydantic
+import pydantic as _pydantic
 import numpy as _numpy
 import transformers as _transformers
+
+from utils.logging_util import make_logger as _make_logger
+_logger, _log_once, change_logging_level = _make_logger(__name__, default_level="WARNING")
 
 # %%
 
@@ -39,25 +21,29 @@ class TokenizerInterface:
     init_kwargs:dict[str,_Any] = dict()
     def __call__(self, *args, **kwargs) -> dict:
         raise NotImplementedError("TokenizerInterface.__call__")
-    def build_inputs_with_special_tokens(self, *args, **kwargs) -> _List[int]:
+    def build_inputs_with_special_tokens(self, *args, **kwargs) -> list[int]:
         raise NotImplementedError("TokenizerInterface.build_inputs_with_special_tokens")
 
 # %%
-class NERSpan(pydantic.BaseModel):
+class NERSpan(_pydantic.BaseModel):
     start: int
     end: int
     label: int = 0
     id: _Optional[str] = None
 
-    @pydantic.model_validator(mode="after")
+    @_pydantic.model_validator(mode="after")
     def check_some(self):
-        assert self.start <= self.end, f'self.start must be equal to or less than self.end, but {self.start=} {self.end=} ({self=})'
+        if not (self.start <= self.end):
+            raise ValueError(f'self.start must be equal to or less than self.end, but {self.start=} {self.end=} ({self=})')
         return self
 
-    model_config = pydantic.ConfigDict(
+    model_config = _pydantic.ConfigDict(
         validate_assignment=True,
         frozen=True,
     )
+
+    def without_id(self):
+        return self.model_copy(update={"id":None})
 
 
 class NERTaggingScheme(str, _enum.Enum):
@@ -82,8 +68,12 @@ class NERTruncationScheme(str, _enum.Enum):
     TRUNCATE = "truncate"
     SPLIT = "split"
 
+class NERSpanFittingScheme(str, _enum.Enum):
+    MAXIMIZE = "maximize"
+    MINIMIZE = "minimize"
 
-class NERSplitInfo(pydantic.BaseModel):
+
+class NERSplitInfo(_pydantic.BaseModel):
     num_splits:int
     split_index:int
     char_offset:int
@@ -94,47 +84,47 @@ class NERSplitInfo(pydantic.BaseModel):
     def is_last_split(self) -> bool:
         return self.num_splits == (self.split_index + 1)
 
-class NERAdditionalInfo(pydantic.BaseModel):
+class NERAdditionalInfo(_pydantic.BaseModel):
     split: _Optional[NERSplitInfo] = None
-    forward_special_token_size: int = pydantic.Field(default=0, description="number of tokens that are not included in originall text and placed in front of it (e.g., [BOS] or additional prompt).")
-    backward_special_token_size: int = pydantic.Field(default=0, description="number of tokens that are not included in originall text and placed behind it (e.g., [SEP] or additional prompt).")
+    forward_special_token_size: int = _pydantic.Field(default=0, description="number of tokens that are not included in originall text and placed in front of it (e.g., [BOS] or additional prompt).")
+    backward_special_token_size: int = _pydantic.Field(default=0, description="number of tokens that are not included in originall text and placed behind it (e.g., [SEP] or additional prompt).")
     note: _Optional[_Any] = None
 
-def serialize_without_default(mod:pydantic.BaseModel) -> dict[str, _Any]:
+def serialize_without_default(mod:_pydantic.BaseModel) -> dict[str, _Any]:
     return mod.model_dump(exclude_defaults=True)
 
 
-class NERInstance(pydantic.BaseModel):
+class NERInstance(_pydantic.BaseModel):
     text: str
-    spans: _List[NERSpan]
+    spans: list[NERSpan]
     id: _Any = None
 
-    token_ids: _Optional[_List[int]] = None
-    token_spans: _Optional[_List[NERSpan]] = None
-    offset_mapping: _Optional[_List[_Tuple[int,int]]] = None
+    token_ids: _Optional[list[int]] = None
+    token_spans: _Optional[list[NERSpan]] = None
+    offset_mapping: _Optional[list[tuple[int,int]]] = None
     has_added_special_tokens: bool = False
 
-    info: _Annotated[NERAdditionalInfo, pydantic.PlainSerializer(serialize_without_default, when_used="unless-none")] = pydantic.Field(default_factory=NERAdditionalInfo)
+    info: _Annotated[NERAdditionalInfo, _pydantic.PlainSerializer(serialize_without_default, when_used="unless-none")] = _pydantic.Field(default_factory=NERAdditionalInfo)
 
-    model_config = pydantic.ConfigDict(
+    model_config = _pydantic.ConfigDict(
         validate_assignment=True,
     )
 
     @classmethod
-    def build(cls, text:str, spans:_List[NERSpan], id:_Any=None, *, tokenizer:_Optional[TokenizerInterface]=None, add_special_tokens:_Optional[bool]=None, truncation:_Union[None, bool, NERTruncationScheme]=None, max_length:_Optional[int]=None, stride:_Optional[int]=None, fit_to_token:_Optional[bool]=None, add_split_idx_to_id:_Optional[bool]=None, return_non_truncated:_Optional[bool]=None, ignore_trim_offsets:_Optional[bool]=None, tokenizer_other_kwargs:_Optional[dict]=None):
+    def build(cls, text:str, spans:list[NERSpan], id:_Any=None, *, tokenizer:_Optional[TokenizerInterface]=None, add_special_tokens:_Optional[bool]=None, truncation:_Union[None, bool, NERTruncationScheme]=None, max_length:_Optional[int]=None, stride:_Optional[int]=None, fit_token_span:_Optional[NERSpanFittingScheme]=None, add_split_idx_to_id:_Optional[bool]=None, return_non_truncated:_Optional[bool]=None, ignore_trim_offsets:_Optional[bool]=None, tokenizer_other_kwargs:_Optional[dict]=None):
         spans = [NERSpan.model_validate(span) for span in spans]
         spans = [span if type(span) is NERSpan else NERSpan(*span) for span in spans]
         out = cls(text=text, spans=spans, id=id)
         if tokenizer is not None:
             encode_func_args = dict()
-            for key in ["add_special_tokens", "truncation", "max_length", "stride", "fit_to_token", "add_split_idx_to_id", "return_non_truncated", "ignore_trim_offsets", "tokenizer_other_kwargs"]:
+            for key in ["add_special_tokens", "truncation", "max_length", "stride", "fit_token_span", "add_split_idx_to_id", "return_non_truncated", "ignore_trim_offsets", "tokenizer_other_kwargs"]:
                 value = eval(key)
                 if value is not None:
                     encode_func_args[key] = value
             out = out.encode_(tokenizer, **encode_func_args)
         return out
 
-    def encode_(self, tokenizer:TokenizerInterface, *, add_special_tokens:bool=False, truncation:_Union[None, bool, NERTruncationScheme]=NERTruncationScheme.NONE, max_length:_Optional[int]=None, stride:_Optional[int]=None, fit_to_token:bool=True, add_split_idx_to_id:bool=False, return_non_truncated:bool=False, ignore_trim_offsets:bool=False, tokenizer_other_kwargs:_Optional[dict]=None):
+    def encode_(self, tokenizer:TokenizerInterface, *, add_special_tokens:bool=False, truncation:_Union[None, bool, NERTruncationScheme]=NERTruncationScheme.NONE, max_length:_Optional[int]=None, stride:_Optional[int]=None, fit_token_span:NERSpanFittingScheme=NERSpanFittingScheme.MAXIMIZE, add_split_idx_to_id:bool=False, return_non_truncated:bool=False, ignore_trim_offsets:bool=False, tokenizer_other_kwargs:_Optional[dict]=None):
         assert not self.has_added_special_tokens
 
         if tokenizer.init_kwargs.get("trim_offsets", True):
@@ -143,7 +133,7 @@ class NERInstance(pydantic.BaseModel):
                 message += " To ignore this warning, set `ignore_trim_offsets=True` at calling `NERInstance.build` or `NERInstance.encode_`."
                 raise ValueError(message)
             else:
-                _WarnOnce.once(key="trim_offsets should be False at NERInstance.encode_", message=message)
+                _log_once(message=message, level="WARNING")
 
         if isinstance(truncation, bool):
             if truncation:
@@ -161,7 +151,7 @@ class NERInstance(pydantic.BaseModel):
         assert "truncation" not in tokenizer_other_kwargs, '"truncation" option can be only given at the direct argument of encode_ function.'
         for key in ["add_special_tokens", "max_length"]:
             if key in tokenizer_other_kwargs:
-                _logger.warning(f'found the argument "{key}" in "tokenizer_other_kwargs". change to giving the argument directly to the fucntion.')
+                _log_once(message=f'found the argument "{key}" in "tokenizer_other_kwargs". change to giving the argument directly to the fucntion.', level="WARNING")
                 exec(f'{key} = tokenizer_other_kwargs["{key}"]')
         tokenizer_other_kwargs["add_special_tokens"] = False
         if max_length is not None:
@@ -199,7 +189,7 @@ class NERInstance(pydantic.BaseModel):
         offset_mapping_start_with_sentinel = [start for start,_ in self.offset_mapping] + [self.offset_mapping[-1][1]]
         offset_mapping_end_with_sentinel = [0] + [end for _,end in self.offset_mapping]
         for span in self.spans:
-            if fit_to_token:
+            if fit_token_span == NERSpanFittingScheme.MAXIMIZE:
                 for st in range(len(self.token_ids)):
                     if offset_mapping_end_with_sentinel[st] <= span.start < offset_mapping_end_with_sentinel[st+1]:
                         break
@@ -216,11 +206,15 @@ class NERInstance(pydantic.BaseModel):
 
                 token_spans.append(NERSpan(start=st,end=et_minus_one+1, label=span.label, id=span.id))
 
-            else:
+            elif fit_token_span == NERSpanFittingScheme.MINIMIZE:
                 st = start_to_token_id.get(span.start, None)
                 et_minus_one = end_to_token_id.get(span.end, None)
                 if (st is not None) and (et_minus_one is not None):
                     token_spans.append(NERSpan(start=st,end=et_minus_one+1, label=span.label, id=span.id))
+
+            else:
+                raise ValueError(fit_token_span)
+
         self.token_spans = token_spans
 
         if truncation == NERTruncationScheme.SPLIT:
@@ -261,7 +255,7 @@ class NERInstance(pydantic.BaseModel):
         out = self.model_copy(deep=True)
         return out.with_special_tokens_(tokenizer=tokenizer)
 
-    def with_query_and_special_tokens_(self, tokenizer:TokenizerInterface, encoded_query:_List[int], max_length:int, restrict_gold_class:_Optional[int]=None):
+    def with_query_and_special_tokens_(self, tokenizer:TokenizerInterface, encoded_query:list[int], max_length:int, restrict_gold_class:_Optional[int]=None):
         assert not self.has_added_special_tokens, f'must be without special tokens. id:{self.id}'
 
         new_input_ids = tokenizer.build_inputs_with_special_tokens(encoded_query, self.token_ids)
@@ -288,7 +282,7 @@ class NERInstance(pydantic.BaseModel):
 
         return self
 
-    def with_query_and_special_tokens(self, tokenizer:TokenizerInterface, encoded_query:_List[int], max_length:int, restrict_gold_class:_Optional[int]=None):
+    def with_query_and_special_tokens(self, tokenizer:TokenizerInterface, encoded_query:list[int], max_length:int, restrict_gold_class:_Optional[int]=None):
         out = self.model_copy(deep=True)
         return out.with_query_and_special_tokens_(tokenizer=tokenizer, encoded_query=encoded_query, max_length=max_length, restrict_gold_class=restrict_gold_class)
 
@@ -362,8 +356,8 @@ class NERInstance(pydantic.BaseModel):
         return self
 
 
-    @pydantic.validate_call
-    def get_sequence_label(self, tagging_scheme:NERTaggingScheme=NERTaggingScheme.BILOU, label_scheme:NERLabelScheme=NERLabelScheme.SINGLE_LABEL, restrict_gold_class:_Optional[int]=None, num_class_without_negative:_Optional[int]=None, strict:bool=True) -> _Union[_List[int],_List[_List[int]]]:
+    @_pydantic.validate_call
+    def get_sequence_label(self, tagging_scheme:NERTaggingScheme=NERTaggingScheme.BILOU, label_scheme:NERLabelScheme=NERLabelScheme.SINGLE_LABEL, restrict_gold_class:_Optional[int]=None, num_class_without_negative:_Optional[int]=None, strict:bool=True) -> _Union[list[int],list[list[int]]]:
         """
         output := [label_0, label_1, label_2, ...]
 
@@ -488,12 +482,12 @@ class NERInstance(pydantic.BaseModel):
 
         return out
 
-    def decode_token_span_to_char_span(self, span:_Union[NERSpan, _List[NERSpan]], strip:bool=False, recover_split:bool=False, offset_to_skip_forward_special_tokens:bool=False) -> _Union[NERSpan, _List[NERSpan]]:
+    def decode_token_span_to_char_span(self, span:_Union[NERSpan, list[NERSpan]], strip:bool=True, recover_split:bool=False, is_token_span_starting_after_special_tokens:bool=False) -> _Union[NERSpan, list[NERSpan]]:
         if not isinstance(span, NERSpan):
-            return [self.decode_token_span_to_char_span(s, strip=strip, recover_split=recover_split, offset_to_skip_forward_special_tokens=offset_to_skip_forward_special_tokens) for s in span]
+            return [self.decode_token_span_to_char_span(s, strip=strip, recover_split=recover_split, is_token_span_starting_after_special_tokens=is_token_span_starting_after_special_tokens) for s in span]
 
         skip_offset = 0
-        if offset_to_skip_forward_special_tokens:
+        if is_token_span_starting_after_special_tokens:
             skip_offset = skip_offset + self.info.forward_special_token_size
 
         char_start, _ = self.offset_mapping[skip_offset+span.start]
@@ -509,7 +503,7 @@ class NERInstance(pydantic.BaseModel):
             out = self.recover_split_offset_of_char_spans(out)
         return out
 
-    def strip_char_spans(self, span:_Union[NERSpan, _List[NERSpan]]) -> _Union[NERSpan, _List[NERSpan]]:
+    def strip_char_spans(self, span:_Union[NERSpan, list[NERSpan]]) -> _Union[NERSpan, list[NERSpan]]:
         if not isinstance(span, NERSpan):
             return [self.strip_char_spans(s) for s in span]
 
@@ -520,7 +514,7 @@ class NERInstance(pydantic.BaseModel):
         out = span.model_copy(update={"start":span.start+forward_blank_size, "end":span.end-backward_blank_size})
         return out
 
-    def recover_split_offset_of_char_spans(self, span:_Union[NERSpan, _List[NERSpan]]) -> _Union[NERSpan, _List[NERSpan]]:
+    def recover_split_offset_of_char_spans(self, span:_Union[NERSpan, list[NERSpan]]) -> _Union[NERSpan, list[NERSpan]]:
         if not isinstance(span, NERSpan):
             return [self.recover_split_offset_of_char_spans(s) for s in span]
 
@@ -532,7 +526,7 @@ class NERInstance(pydantic.BaseModel):
 
 
 # %%
-def convert_sequence_label_to_spans(sequence_label:_Union[_List[int],_List[_List[int]]], tagging_scheme:NERTaggingScheme=NERTaggingScheme.BILOU, label_scheme:NERLabelScheme=NERLabelScheme.SINGLE_LABEL) -> _List[NERSpan]:
+def convert_sequence_label_to_spans(sequence_label:_Union[list[int],list[list[int]]], tagging_scheme:NERTaggingScheme=NERTaggingScheme.BILOU, label_scheme:NERLabelScheme=NERLabelScheme.SINGLE_LABEL) -> list[NERSpan]:
     if label_scheme in [NERLabelScheme.SINGLE_LABEL, NERLabelScheme.SPAN_ONLY]:
         if tagging_scheme == NERTaggingScheme.TOKEN_LEVEL:
             return [NERSpan(start=t,end=t+1,label=label-1) for t, label in enumerate(sequence_label) if label != 0]
@@ -679,7 +673,7 @@ def convert_sequence_label_to_spans(sequence_label:_Union[_List[int],_List[_List
     else:
         raise ValueError(label_scheme)
 
-def viterbi_decode(logits_sequence:_Union[_List[float],_List[_List[float]],_List[_List[_List[float]]]], tagging_scheme:NERTaggingScheme=NERTaggingScheme.BILOU, label_scheme:NERLabelScheme=NERLabelScheme.SINGLE_LABEL, scalar_logit_for_token_level:bool=False, as_spans:bool=False) -> _Union[_Union[_List[int],_List[_List[int]]], _List[NERSpan]]:
+def viterbi_decode(logits_sequence:_Union[list[float],list[list[float]],list[list[list[float]]]], tagging_scheme:NERTaggingScheme=NERTaggingScheme.BILOU, label_scheme:NERLabelScheme=NERLabelScheme.SINGLE_LABEL, scalar_logit_for_token_level:bool=False, as_spans:bool=False) -> _Union[_Union[list[int],list[list[int]]], list[NERSpan]]:
     """
     input: logits_sequence
     - 2D or 3D float list. shape==[seq_len, [num_class,] num_label].
@@ -849,7 +843,7 @@ def viterbi_decode(logits_sequence:_Union[_List[float],_List[_List[float]],_List
     sequence_label = list(reversed(reverse_trajectory))
     return sequence_label
 
-def merge_spans(spans:_List[NERSpan]) -> _List[NERSpan]:
+def merge_spans(spans:list[NERSpan]) -> list[NERSpan]:
     if len(spans) == 0:
         return list()
     max_end = max([0] + [span.end for span in spans])
@@ -942,9 +936,9 @@ class NERMultiElementSparseSequence(_Generic[_ElementT]):
             out.append(aggregated_value)
         return out
 
-@pydantic.validate_call
-def ensemble_split_sequences(splits:list[NERInstance], corresponding_token_sequences:list[_Any], aggregate:NERAggregateScheme, boundary_exclusion_size:pydantic.NonNegativeInt=0, allow_missing:bool=False, missing_value:_Any=None) -> list:
-    # NOTE: comment-out since this function now uses pydantic.validate_call with the type of NonNegativeInt for boundary_exclusion_size.
+@_pydantic.validate_call
+def ensemble_split_sequences(splits:list[NERInstance], corresponding_token_sequences:list[_Any], aggregate:NERAggregateScheme, boundary_exclusion_size:_pydantic.NonNegativeInt=0, allow_missing:bool=False, missing_value:_Any=None) -> list:
+    # NOTE: comment-out since this function now uses _pydantic.validate_call with the type of NonNegativeInt for boundary_exclusion_size.
     #assert boundary_exclusion_size >= 0, f'{boundary_exclusion_size=} must be equal to or greater than 0.'
 
     aggregator = NERMultiElementSparseSequence()
