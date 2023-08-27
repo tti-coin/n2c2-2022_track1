@@ -1,7 +1,7 @@
 {
     "train_corpus_dir": "../../data/trainingdata_v3/train",
     "dev_corpus_dir": "../../data/trainingdata_v3/dev",
-    "output_entity_label": "Medication",
+    "labels": "[\"Medication\"]",
 
     "bert_name": "../../data/transformers/RoBERTa-large-PM-M3-Voc-NewLines",
     "max_length": 512,
