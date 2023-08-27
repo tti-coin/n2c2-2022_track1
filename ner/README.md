@@ -59,7 +59,11 @@ python3 main_ner.py --mode eval-test --config_file ${MODEL_SAVE_DIR}/run-config.
 ls ${VALIDATION_OUTPUT_DIR} # see outputs.
 ```
 
-- NOTE: To use another pretrained weight, use `--bert_name /path-or-name/of/bert` option when running `main_ner.py`.
+# NOTE
+- Trained model used in the workshop and the paper: https://github.com/tti-coin/n2c2-2022_track1/releases/tag/ner
+
+- To use another pretrained weight, use `--bert_name /path-or-name/of/bert` option when running `main_ner.py`.
     - example: `python3 main_ner.py --bert_name bert-base-uncased --mode train --config_file ${BASE_CONFIG_FILE_PATH} --save_dir ${MODEL_SAVE_DIR}`
-- NOTE: Any BRAT-format files can be processed by the script. Run `main_ner.py` with options `--train_corpus_dir /path/to/train_dir` and `--dev_corpus_dir /path/to/dev_dir` to indicate the dataset directories.
+
+- Any BRAT-format files can be processed by the script. Run `main_ner.py` with options `--train_corpus_dir /path/to/train_dir` and `--dev_corpus_dir /path/to/dev_dir` to indicate the dataset directories.
 
