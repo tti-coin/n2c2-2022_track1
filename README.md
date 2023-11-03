@@ -6,7 +6,7 @@ Striding NER model and span-based and QA-based event/context classification mode
 - Trained model used in the workshop and the paper: https://github.com/tti-coin/n2c2-2022_track1/releases/tag/ner
 
 # Span-based CC/EC model
-WIP
+- See [/span-based](/span-based) directory.
 
 # QA-based CC/EC model
 WIP
